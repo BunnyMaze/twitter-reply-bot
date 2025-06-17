@@ -13,6 +13,25 @@ const client = new TwitterApi({
 
 const rwClient = client.readWrite;
 
+const imageUrls = process.env.IMAGE_URLS ? process.env.IMAGE_URLS.split(',') : [];
+
+const getRandomImageUrl = () => {
+  if (imageUrls.length === 0) return null;
+  const idx = Math.floor(Math.random() * imageUrls.length);
+  return imageUrls[idx].trim();
+};
+
+const uploadImageFromUrl = async (url) => {
+  try {
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    const mediaId = await rwClient.v1.uploadMedia(Buffer.from(response.data), { mimeType: 'image/jpeg' });
+    return mediaId;
+  } catch (err) {
+    console.error('Fehler beim Hochladen des Bildes:', err.message);
+    return null;
+  }
+};
+
 const generateMemeReply = async (tweetText) => {
   try {
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
@@ -57,7 +76,18 @@ app.post('/tweet-reply', async (req, res) => {
     const tweetText = tweet?.data?.text || '';
 
     const replyText = await generateMemeReply(tweetText);
-    await rwClient.v2.reply(replyText, tweetId);
+
+    const imageUrl = getRandomImageUrl();
+    let mediaId = null;
+    if (imageUrl) {
+      mediaId = await uploadImageFromUrl(imageUrl);
+    }
+
+    if (mediaId) {
+      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [mediaId] } });
+    } else {
+      await rwClient.v2.reply(replyText, tweetId);
+    }
 
     res.status(200).send('Antwort gesendet');
   } catch (err) {
