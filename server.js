@@ -65,7 +65,20 @@ const generateMemeReply = async (tweetText) => {
   }
 };
 
+// Rate limiter Variablen
+let lastReplyTimestamp = 0;
+const MIN_INTERVAL = 17 * 60 * 1000; // 17 Minuten in Millisekunden
+
 app.post('/tweet-reply', async (req, res) => {
+  const now = Date.now();
+
+  if (now - lastReplyTimestamp < MIN_INTERVAL) {
+    console.log('Rate limit aktiv: Noch nicht 17 Minuten seit letzter Antwort.');
+    return res.status(429).send('Zu viele Anfragen – bitte später erneut versuchen.');
+  }
+
+  lastReplyTimestamp = now;
+
   const tweetUrl = req.body.url;
   const tweetId = tweetUrl?.split('/').pop();
 
@@ -84,17 +97,4 @@ app.post('/tweet-reply', async (req, res) => {
     }
 
     if (mediaId) {
-      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [mediaId] } });
-    } else {
-      await rwClient.v2.reply(replyText, tweetId);
-    }
-
-    res.status(200).send('Antwort gesendet');
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Fehler beim Antworten');
-  }
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Bot ist live auf Port ${port}`));
+      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [media]()_
