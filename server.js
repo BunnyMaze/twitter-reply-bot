@@ -16,12 +16,18 @@ const rwClient = client.readWrite;
 const generateMemeReply = async (tweetText) => {
   try {
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4',
+      model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'Du bist ein lustiger Meme-Bot, der mit kurzen, witzigen Kommentaren auf Tweets antwortet.' },
-        { role: 'user', content: `Antworte in Meme-Sprache auf diesen Tweet: "${tweetText}"` }
+        {
+          role: 'system',
+          content: 'Du bist ein kreativer, witziger Meme-Bot, der auf Tweets eingeht und dabei immer den Crypto Token $KOII und den Twitter Account @KoiiFoundation erwähnt. Deine Antwort darf maximal 250 Zeichen lang sein und soll Interesse wecken.'
+        },
+        {
+          role: 'user',
+          content: `Antworte auf diesen Tweet: "${tweetText}". Erwähne unbedingt $KOII und @KoiiFoundation. Halte die Antwort humorvoll und einladend.`
+        }
       ],
-      max_tokens: 60
+      max_tokens: 120
     }, {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -29,7 +35,11 @@ const generateMemeReply = async (tweetText) => {
       }
     });
 
-    return response.data.choices[0].message.content.trim();
+    let reply = response.data.choices[0].message.content.trim();
+    if (reply.length > 250) {
+      reply = reply.slice(0, 247) + '...';
+    }
+    return reply;
   } catch (err) {
     console.error('GPT-Fehler:', err.message);
     return '🐸💬 Oops! Meme verloren im Koiverse...';
