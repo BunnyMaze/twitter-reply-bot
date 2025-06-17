@@ -1,35 +1,31 @@
-const express = require('express');
-const { TwitterApi } = require('twitter-api-v2');
-const axios = require('axios');
-const app = express();
-app.use(express.json());
+import express from 'express';
+import bodyParser from 'body-parser';
+import axios from 'axios';
+import { TwitterApi } from 'twitter-api-v2';
 
-const client = new TwitterApi({
+const app = express();
+app.use(bodyParser.json());
+
+const PORT = process.env.PORT || 3000;
+
+// OAuth 1.0a mit Schreibrechten (Read & Write) - Stelle sicher, dass alle Umgebungsvariablen korrekt sind
+const rwClient = new TwitterApi({
   appKey: process.env.TWITTER_API_KEY,
   appSecret: process.env.TWITTER_API_SECRET,
   accessToken: process.env.TWITTER_ACCESS_TOKEN,
   accessSecret: process.env.TWITTER_ACCESS_SECRET,
 });
 
-const rwClient = client.readWrite;
+// Bild-URLs per Komma getrennt in Umgebungsvariable IMAGE_URLS
+const imageUrls = (process.env.IMAGE_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
 
-const imageUrls = process.env.IMAGE_URLS ? process.env.IMAGE_URLS.split(',') : [];
+const MIN_INTERVAL_MS = 432 * 60 * 1000; // 7,2 Stunden
+let lastRunTimestamp = 0;
 
 const getRandomImageUrl = () => {
   if (imageUrls.length === 0) return null;
   const idx = Math.floor(Math.random() * imageUrls.length);
-  return imageUrls[idx].trim();
-};
-
-const uploadImageFromUrl = async (url) => {
-  try {
-    const response = await axios.get(url, { responseType: 'arraybuffer' });
-    const mediaId = await rwClient.v1.uploadMedia(Buffer.from(response.data), { mimeType: 'image/jpeg' });
-    return mediaId;
-  } catch (err) {
-    console.error('Fehler beim Hochladen des Bildes:', err.message);
-    return null;
-  }
+  return imageUrls[idx];
 };
 
 const generateMemeReply = async (tweetText) => {
@@ -42,11 +38,11 @@ const generateMemeReply = async (tweetText) => {
           {
             role: 'system',
             content:
-              'Du bist ein kreativer, witziger Meme-Bot, der auf Tweets eingeht und dabei immer den Crypto Token $KOII und den Twitter Account @KoiiFoundation erwähnt. Deine Antwort darf maximal 250 Zeichen lang sein und soll Interesse wecken.',
+              'You are a witty meme bot replying to tweets in English. Always mention the crypto token $KOII and the Twitter account @KoiiFoundation. Keep the reply under 250 characters and make it engaging.',
           },
           {
             role: 'user',
-            content: `Antworte auf diesen Tweet: "${tweetText}". Erwähne unbedingt $KOII und @KoiiFoundation. Halte die Antwort humorvoll und einladend.`,
+            content: `Reply to this tweet:\n${tweetText}\nDo not put the original tweet in quotes.`,
           },
         ],
         max_tokens: 120,
@@ -60,62 +56,73 @@ const generateMemeReply = async (tweetText) => {
     );
 
     let reply = response.data.choices[0].message.content.trim();
+
     if (reply.length > 250) {
       reply = reply.slice(0, 247) + '...';
     }
+
     return reply;
   } catch (err) {
-    console.error('GPT-Fehler:', err.message);
-    return '🐸💬 Oops! Meme verloren im Koiverse...';
+    console.error('GPT error:', err.message);
+    return '🐸💬 Oops! Meme lost in the Koiverse...';
   }
 };
 
-// Rate limiter Variablen
-let lastReplyTimestamp = 0;
-const MIN_INTERVAL = 17 * 60 * 1000; // 17 Minuten in Millisekunden
-
 app.post('/tweet-reply', async (req, res) => {
   const now = Date.now();
-
-  if (now - lastReplyTimestamp < MIN_INTERVAL) {
-    console.log('Rate limit aktiv: Noch nicht 17 Minuten seit letzter Antwort.');
-    return res.status(429).send('Zu viele Anfragen – bitte später erneut versuchen.');
+  if (now - lastRunTimestamp < MIN_INTERVAL_MS) {
+    console.log('Skipped run: waiting for 7.2 hours interval');
+    return res.status(429).json({ message: 'Too many requests, try later.' });
   }
-
-  lastReplyTimestamp = now;
-
-  const tweetUrl = req.body.url;
-  const tweetId = tweetUrl?.split('/').pop();
-
-  if (!tweetId) return res.status(400).send('Ungültige Tweet-URL');
+  lastRunTimestamp = now;
 
   try {
-    const tweet = await rwClient.v2.singleTweet(tweetId, {
-      expansions: ['author_id'],
-      'tweet.fields': ['text'],
-    });
-    const tweetText = tweet?.data?.text || '';
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ message: 'Missing tweet URL' });
+    }
 
+    // Tweet ID aus URL extrahieren
+    const tweetIdMatch = url.match(/status\/(\d+)/);
+    if (!tweetIdMatch) {
+      return res.status(400).json({ message: 'Invalid tweet URL format' });
+    }
+    const tweetId = tweetIdMatch[1];
+
+    // Original-Tweet holen
+    const tweet = await rwClient.v2.singleTweet(tweetId, { 'tweet.fields': ['text'] });
+    if (!tweet || !tweet.data) {
+      return res.status(404).json({ message: 'Tweet not found' });
+    }
+    const tweetText = tweet.data.text;
+
+    // Antworttext generieren
     const replyText = await generateMemeReply(tweetText);
 
+    // Optional: Bild hochladen und media_id anfügen, falls Bild vorhanden
+    let mediaIds = [];
     const imageUrl = getRandomImageUrl();
-    let mediaId = null;
     if (imageUrl) {
-      mediaId = await uploadImageFromUrl(imageUrl);
+      try {
+        const imageResp = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        const mediaId = await rwClient.v1.uploadMedia(Buffer.from(imageResp.data), { type: 'png' });
+        mediaIds.push(mediaId);
+      } catch (err) {
+        console.error('Image upload failed:', err.message);
+      }
     }
 
-    if (mediaId) {
-      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [mediaId] } });
-    } else {
-      await rwClient.v2.reply(replyText, tweetId);
-    }
+    // Antwort-Tweet posten (reply to tweetId)
+    await rwClient.v2.reply(replyText, tweetId, mediaIds.length > 0 ? { media: { media_ids: mediaIds } } : {});
 
-    res.status(200).send('Antwort gesendet');
+    console.log('Replied to tweet', tweetId);
+    res.json({ message: 'Replied successfully', reply: replyText });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Fehler beim Antworten');
+    console.error('Error in /tweet-reply:', err);
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Bot ist live auf Port ${port}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
