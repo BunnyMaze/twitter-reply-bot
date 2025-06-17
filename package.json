@@ -1,0 +1,13 @@
+{
+  "name": "twitter-reply-bot",
+  "version": "1.1.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "twitter-api-v2": "^1.16.0",
+    "axios": "^1.6.8"
+  }
+}
