@@ -34,25 +34,30 @@ const uploadImageFromUrl = async (url) => {
 
 const generateMemeReply = async (tweetText) => {
   try {
-    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'Du bist ein kreativer, witziger Meme-Bot, der auf Tweets eingeht und dabei immer den Crypto Token $KOII und den Twitter Account @KoiiFoundation erwähnt. Deine Antwort darf maximal 250 Zeichen lang sein und soll Interesse wecken.'
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Du bist ein kreativer, witziger Meme-Bot, der auf Tweets eingeht und dabei immer den Crypto Token $KOII und den Twitter Account @KoiiFoundation erwähnt. Deine Antwort darf maximal 250 Zeichen lang sein und soll Interesse wecken.',
+          },
+          {
+            role: 'user',
+            content: `Antworte auf diesen Tweet: "${tweetText}". Erwähne unbedingt $KOII und @KoiiFoundation. Halte die Antwort humorvoll und einladend.`,
+          },
+        ],
+        max_tokens: 120,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
         },
-        {
-          role: 'user',
-          content: `Antworte auf diesen Tweet: "${tweetText}". Erwähne unbedingt $KOII und @KoiiFoundation. Halte die Antwort humorvoll und einladend.`
-        }
-      ],
-      max_tokens: 120
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
       }
-    });
+    );
 
     let reply = response.data.choices[0].message.content.trim();
     if (reply.length > 250) {
@@ -85,7 +90,10 @@ app.post('/tweet-reply', async (req, res) => {
   if (!tweetId) return res.status(400).send('Ungültige Tweet-URL');
 
   try {
-    const tweet = await rwClient.v2.singleTweet(tweetId, { expansions: ['author_id'], 'tweet.fields': ['text'] });
+    const tweet = await rwClient.v2.singleTweet(tweetId, {
+      expansions: ['author_id'],
+      'tweet.fields': ['text'],
+    });
     const tweetText = tweet?.data?.text || '';
 
     const replyText = await generateMemeReply(tweetText);
@@ -97,4 +105,17 @@ app.post('/tweet-reply', async (req, res) => {
     }
 
     if (mediaId) {
-      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [media]()_
+      await rwClient.v2.reply(replyText, tweetId, { media: { media_ids: [mediaId] } });
+    } else {
+      await rwClient.v2.reply(replyText, tweetId);
+    }
+
+    res.status(200).send('Antwort gesendet');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Fehler beim Antworten');
+  }
+});
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`Bot ist live auf Port ${port}`));
